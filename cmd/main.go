@@ -89,15 +89,14 @@ var listCmd = &cobra.Command{
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run the next job in the queue",
+	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		jobID := args[0] // Get the job ID from the command argument
+
 		s := scheduler.NewScheduler()
 		defer db.CloseDatabase() // Ensure the database is closed when done
 
-		if len(s.Queue) == 0 {
-			fmt.Println("[scheduler] -- No jobs in the queue")
-			return
-		}
-
-		s.Run()
+		// Run the specific job
+		s.Run(jobID)
 	},
 }
