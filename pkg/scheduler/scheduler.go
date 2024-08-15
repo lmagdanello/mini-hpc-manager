@@ -103,7 +103,7 @@ func (s *Scheduler) Run(ID string) {
 	// Create the container
 	resp, err := s.dockerClient.ContainerCreate(ctx, &container.Config{
 		Image: jobToRun.Image,
-		Cmd:   []string{jobToRun.Command},
+		Cmd:   []string{"sh", "-c", jobToRun.Command},
 		Tty:   false,
 	}, &container.HostConfig{
 		Resources: container.Resources{
