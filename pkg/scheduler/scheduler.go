@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"mini-hpc-manager/db"
 	"mini-hpc-manager/pkg/job"
 	"os"
 
@@ -20,19 +21,34 @@ type Scheduler struct {
 }
 
 func NewScheduler() *Scheduler {
+
+	// Initialize the Database
+	if err := db.InitDatabase(); err != nil {
+		log.Fatalf("[scheduler] -- Error initializing database: %v", err)
+	}
+
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
 		panic(err)
 	}
 
+	// Load the queue from the database
+	jobs, err := db.LoadQueue()
+	if err != nil {
+		log.Fatalf("[scheduler] -- Error loading queue: %v", err)
+	}
+
 	return &Scheduler{
-		Queue:        []job.Job{},
+		Queue:        jobs,
 		dockerClient: cli,
 	}
 }
 
 func (s *Scheduler) AddJob(j job.Job) {
 	s.Queue = append(s.Queue, j)
+	if err := db.AddJob(j); err != nil {
+		log.Printf("[scheduler] -- Error adding job to database: %v", err)
+	}
 }
 
 func (s *Scheduler) Run() {
@@ -50,6 +66,9 @@ func (s *Scheduler) Run() {
 
 	// Update job status
 	nextJob.Status = job.JobStatusRunning
+	if err := db.UpdateJob(nextJob); err != nil {
+		log.Printf("[scheduler] -- Error updating job status in database: %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -59,9 +78,14 @@ func (s *Scheduler) Run() {
 		log.Println("[scheduler] -- Error pulling image: ", err)
 		nextJob.Status = job.JobStatusFailed
 		return
+	} else {
+		// Ensure the image is pulled before continuing
+		// This is necessary because the image pull is done asynchronously
+		// and the container creation will fail if the image is not pulled
+		// before the container is created
+		defer reader.Close()
+		io.Copy(os.Stdout, reader)
 	}
-	defer reader.Close()
-	io.Copy(os.Stdout, reader)
 
 	// Create the container
 	resp, err := s.dockerClient.ContainerCreate(ctx, &container.Config{
@@ -77,6 +101,7 @@ func (s *Scheduler) Run() {
 	if err != nil {
 		log.Println("[scheduler] -- Error creating container: ", err)
 		nextJob.Status = job.JobStatusFailed
+		db.UpdateJob(nextJob)
 		return
 	}
 
@@ -84,6 +109,7 @@ func (s *Scheduler) Run() {
 	if err := s.dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		log.Println("[scheduler] -- Error starting container: ", err)
 		nextJob.Status = job.JobStatusFailed
+		db.UpdateJob(nextJob)
 		return
 	}
 
@@ -94,6 +120,7 @@ func (s *Scheduler) Run() {
 		if err != nil {
 			log.Println("[scheduler] -- Error waiting for container: ", err)
 			nextJob.Status = job.JobStatusFailed
+			db.UpdateJob(nextJob)
 			return
 		}
 	case <-statusCh:
@@ -104,6 +131,7 @@ func (s *Scheduler) Run() {
 	if err != nil {
 		log.Println("[scheduler] -- Error getting container logs: ", err)
 		nextJob.Status = job.JobStatusFailed
+		db.UpdateJob(nextJob)
 		return
 	}
 
@@ -112,6 +140,7 @@ func (s *Scheduler) Run() {
 	if err != nil {
 		log.Println("[scheduler] -- Error reading container logs: ", err)
 		nextJob.Status = job.JobStatusFailed
+		db.UpdateJob(nextJob)
 		return
 	}
 
@@ -121,10 +150,21 @@ func (s *Scheduler) Run() {
 	fmt.Printf("[scheduler] -- Job %s complete\n", nextJob.ID)
 	fmt.Printf("[scheduler] -- Job log:\n%s\n", nextJob.Log)
 
+	// Update the job in the database
+	if err := db.UpdateJob(nextJob); err != nil {
+		log.Printf("[scheduler] -- Error updating job in database: %v", err)
+	}
+
 	// Clean up the container
 	if err := s.dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
 		log.Println("[scheduler] -- Error removing container: ", err)
 		nextJob.Status = job.JobStatusFailed
 		return
+	}
+}
+
+func CloseScheduler() {
+	if err := db.CloseDatabase(); err != nil {
+		log.Fatalf("[scheduler] -- Error closing database: %v", err)
 	}
 }

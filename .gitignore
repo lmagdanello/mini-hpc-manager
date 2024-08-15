@@ -16,3 +16,6 @@
 
 # Go modules
 vendor/
+
+# sqlite3
+*.db

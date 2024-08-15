@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"mini-hpc-manager/db"
 	"mini-hpc-manager/pkg/job"
 	"mini-hpc-manager/pkg/scheduler"
 	"os"
@@ -12,8 +13,13 @@ import (
 )
 
 func main() {
+	// Initialize the database
+	if err := db.InitDatabase(); err != nil {
+		log.Fatalf("Error initializing database: %v", err)
+	}
+	defer db.CloseDatabase()
 
-	// CLI
+	// CLI setup
 	var rootCmd = &cobra.Command{
 		Use:   "mini-hpc",
 		Short: "Mini HPC Manager",
@@ -35,7 +41,7 @@ var addCmd = &cobra.Command{
 	Short: "Add a new job",
 	Long:  `Add a new job to the scheduler.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) < 1 {
+		if len(args) < 2 {
 			fmt.Println("Usage: mini-hpc add <docker-image> <command>")
 			return
 		}
@@ -55,8 +61,9 @@ var addCmd = &cobra.Command{
 		}
 
 		// Add the job to the scheduler
-		scheduler := scheduler.NewScheduler()
-		scheduler.AddJob(job)
+		s := scheduler.NewScheduler()
+		defer db.CloseDatabase() // Ensure the database is closed when done
+		s.AddJob(job)
 		fmt.Printf("[scheduler] -- Job added: %s\n", job.ID)
 	},
 }
@@ -65,14 +72,15 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all jobs",
 	Run: func(cmd *cobra.Command, args []string) {
-		scheduler := scheduler.NewScheduler()
+		s := scheduler.NewScheduler()
+		defer db.CloseDatabase() // Ensure the database is closed when done
 
-		if len(scheduler.Queue) == 0 {
+		if len(s.Queue) == 0 {
 			fmt.Println("[scheduler] -- No jobs in the queue")
 			return
 		}
 
-		for i, j := range scheduler.Queue {
+		for i, j := range s.Queue {
 			fmt.Printf("[scheduler] -- [%d] ID: %s, Image: %s, Command: %s, Status: %s\n", i+1, j.ID, j.Image, j.Command, j.Status)
 		}
 	},
@@ -82,13 +90,14 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run the next job in the queue",
 	Run: func(cmd *cobra.Command, args []string) {
-		scheduler := scheduler.NewScheduler()
+		s := scheduler.NewScheduler()
+		defer db.CloseDatabase() // Ensure the database is closed when done
 
-		if len(scheduler.Queue) == 0 {
+		if len(s.Queue) == 0 {
 			fmt.Println("[scheduler] -- No jobs in the queue")
 			return
 		}
 
-		scheduler.Run()
+		s.Run()
 	},
 }
