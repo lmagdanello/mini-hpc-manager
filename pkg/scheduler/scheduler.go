@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"mini-hpc-manager/pkg/job"
 	"os"
@@ -50,34 +51,20 @@ func (s *Scheduler) Run() {
 	// Update job status
 	nextJob.Status = job.JobStatusRunning
 
-	context := context.Background()
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		log.Println("[scheduler] -- Error creating Docker client: ", err)
-		nextJob.Status = job.JobStatusFailed
-		panic(err)
-	}
-
-	defer cli.Close()
+	ctx := context.Background()
 
 	// Pull the Docker image
-	// cli.ImagePull is asynchronous, so we need to wait for the pull to complete
-
-	reader, err := cli.ImagePull(context, nextJob.Image, image.PullOptions{})
+	reader, err := s.dockerClient.ImagePull(ctx, nextJob.Image, image.PullOptions{})
 	if err != nil {
 		log.Println("[scheduler] -- Error pulling image: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
-
 	defer reader.Close()
 	io.Copy(os.Stdout, reader)
 
-	// Create the container from the image
-	// We need to set the container's resources (CPU and memory) based on the job's requirements
-	// We also need to set the container's command to the job's command
-
-	resp, err := cli.ContainerCreate(context, &container.Config{
+	// Create the container
+	resp, err := s.dockerClient.ContainerCreate(ctx, &container.Config{
 		Image: nextJob.Image,
 		Cmd:   []string{nextJob.Command},
 		Tty:   false,
@@ -90,42 +77,42 @@ func (s *Scheduler) Run() {
 	if err != nil {
 		log.Println("[scheduler] -- Error creating container: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
 
 	// Start the container
-	if err := cli.ContainerStart(context, resp.ID, container.StartOptions{}); err != nil {
+	if err := s.dockerClient.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
 		log.Println("[scheduler] -- Error starting container: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
 
 	// Wait for the container to finish
-	statusCh, errCh := cli.ContainerWait(context, resp.ID, container.WaitConditionNotRunning)
+	statusCh, errCh := s.dockerClient.ContainerWait(ctx, resp.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
 		if err != nil {
 			log.Println("[scheduler] -- Error waiting for container: ", err)
 			nextJob.Status = job.JobStatusFailed
-			panic(err)
+			return
 		}
 	case <-statusCh:
 	}
 
 	// Capture the container's logs
-	out, err := cli.ContainerLogs(context, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	out, err := s.dockerClient.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
 	if err != nil {
 		log.Println("[scheduler] -- Error getting container logs: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
 
-	// Update the job's log
-	var logOutput []byte
-	if _, err := out.Read(logOutput); err != nil {
+	// Read all logs from the container
+	logOutput, err := ioutil.ReadAll(out)
+	if err != nil {
 		log.Println("[scheduler] -- Error reading container logs: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
 
 	// Update the job status and log
@@ -134,13 +121,10 @@ func (s *Scheduler) Run() {
 	fmt.Printf("[scheduler] -- Job %s complete\n", nextJob.ID)
 	fmt.Printf("[scheduler] -- Job log:\n%s\n", nextJob.Log)
 
-	// Recursively run the next job
-	s.Run()
-
 	// Clean up the container
-	if err := cli.ContainerRemove(context, resp.ID, container.RemoveOptions{}); err != nil {
+	if err := s.dockerClient.ContainerRemove(ctx, resp.ID, container.RemoveOptions{}); err != nil {
 		log.Println("[scheduler] -- Error removing container: ", err)
 		nextJob.Status = job.JobStatusFailed
-		panic(err)
+		return
 	}
 }
