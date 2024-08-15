@@ -80,7 +80,6 @@ go build -o mini-hpc
 +---------------------+
 ```
 
-- Release binary!
 - CLI Commands: The command-line interface allows you to add, list, and run jobs.
 - Scheduler: Manages job scheduling, execution, and status updates.
 - SQLite Database: Stores job details and status.
@@ -89,6 +88,7 @@ go build -o mini-hpc
 
 ## future features?
 
+- **Release v1.0.0**
 - Job Priority: Implement job prioritization for more advanced scheduling.
 - Job Dependencies: Support job dependencies and chained execution.
 - User Authentication: Add authentication for user management.
