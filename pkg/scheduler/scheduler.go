@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"mini-hpc-manager/db"
 	"mini-hpc-manager/pkg/job"
@@ -149,7 +148,7 @@ func (s *Scheduler) Run(ID string) {
 	}
 
 	// Read all logs from the container
-	logOutput, err := ioutil.ReadAll(out)
+	logOutput, err := io.ReadAll(out)
 	if err != nil {
 		log.Println("[scheduler] -- Error reading container logs: ", err)
 		jobToRun.Status = job.JobStatusFailed
